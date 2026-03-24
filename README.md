@@ -21,19 +21,19 @@ go build -o tnc.exe
 Uso rápido
 ```bash
 # Escaneo básico
-./tnc.exe -target example.com -ports 80,443 -format csv -out report.csv
+./tnc.exe -target example.com -ports 80,443 -format csv -save report.csv
 
 # Escaneo de rango LAN con más concurrencia
-./tnc.exe -target 192.168.1.0/24 -ports 22-23 -concurrency 50 -format json -out lan.json
+./tnc.exe -target 192.168.1.0/24 -ports 22-23 -concurrency 50 -format json -save lan.json
 ```
 
 
 Flags principales (lista completa)
 - `-ComputerName` : Host, nombre, CIDR o lista separada por comas a escanear (ej: `google.com`, `192.168.1.0/24` o `host1,host2`).
-- `-Port`         : Puertos TCP a probar — puede ser coma-separado o rangos (ej: `22,80,8000-8010`).
+- `-port`         : Puertos TCP a probar — puede ser coma-separado o rangos (ej: `22,80,8000-8010`).
 - `-udp`          : Puertos UDP a probar (coma o rangos).
 - `-all`          : Usa una lista `well-known` de puertos comunes.
-- `-Trace`        : Ejecuta traceroute/tracert y lo incluye en el campo `Trace`.
+- `-trace`        : Ejecuta traceroute/tracert y lo incluye en el campo `Trace`.
 - `-hd`           : Oculta hosts no alcanzables en la salida final.
 - `-v`            : Habilita consulta de MAC/vendor (ARP) cuando sea posible.
 - `-netbios`      : Ejecuta consultas NetBIOS/SMB (cuando aplica).
@@ -41,11 +41,11 @@ Flags principales (lista completa)
 - `-timeout`      : Timeout en milisegundos para operaciones de red (por defecto `400`).
 - `-Save`         : Ruta de fichero donde guardar el reporte (ej: `report.csv`).
 - `-format`       : Formato de export: `csv`, `json`, `html`, `txt` (por defecto `txt`).
-- `-Compare`      : Archivo previo para comparar resultados y mostrar diferencias.
+- `-compare`      : Archivo previo para comparar resultados y mostrar diferencias.
 
 Notas sobre flags
-- `-ComputerName` admite múltiples entradas separadas por comas y CIDRs.
-- `-Port` y `-udp` aceptan listas y rangos; los rangos se expanden internamente.
+- `-computerName` admite múltiples entradas separadas por comas y CIDRs.
+- `-port` y `-udp` aceptan listas y rangos; los rangos se expanden internamente.
 - `-w` no debe ser 0 — el valor mínimo efectivo es `1`.
 - `-timeout` tiene un mínimo práctico de `100ms` para evitar timeouts demasiado bajos.
 
@@ -53,19 +53,19 @@ Ejemplos de uso (equivalentes y combinados)
 - Escaneo simple (host único, puertos TCP 80 y 443):
 
 ```bash
-./tnc.exe -ComputerName google.com -Port 80,443 -Save google.csv -format csv
+./tnc.exe -computerName google.com -port 80,443 -save google.csv -format csv
 ```
 
 - Escaneo UDP y TCP en un rango de puertos:
 
 ```bash
-./tnc.exe -ComputerName example.com -Port 80-82 -udp 53,123 -Save example.json -format json
+./tnc.exe -computerName example.com -port 80-82 -udp 53,123 -Save example.json -format json
 ```
 
 - Escaneo de red local con más concurrencia y traceroute:
 
 ```bash
-./tnc.exe -ComputerName 192.168.1.0/24 -Port 22,80 -w 50 -Trace -Save lan.html -format html
+./tnc.exe -computerName 192.168.1.0/24 -port 22,80 -w 50 -trace -save lan.html -format html
 ```
 
 --
