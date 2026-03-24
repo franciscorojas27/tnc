@@ -42,6 +42,9 @@ type ScanOptions struct {
 	AllPorts bool
 	Trace    bool
 	HideDown bool
+	UseMDNS  bool
+	Force    bool
+	Quiet    bool
 	Vendor   bool
 	NetBIOS  bool
 	Timeout  time.Duration

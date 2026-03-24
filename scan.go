@@ -2,12 +2,16 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/mdns"
 )
 
 func processTarget(target string, opts ScanOptions) HostResult {
@@ -20,6 +24,13 @@ func processTarget(target string, opts ScanOptions) HostResult {
 	res.IP = addr
 	if names, err := net.LookupAddr(addr); err == nil && len(names) > 0 {
 		res.ResolvedName = strings.TrimSuffix(names[0], ".")
+	} else {
+		// optional fallback to mDNS discovery (useful on local networks)
+		if opts.UseMDNS {
+			if mdnsName := mdnsResolveName(addr, 1*time.Second); mdnsName != "" {
+				res.ResolvedName = mdnsName
+			}
+		}
 	}
 
 	// determine source address and interface used for connecting
@@ -62,8 +73,15 @@ func processTarget(target string, opts ScanOptions) HostResult {
 		tempConn.Close()
 	}
 
-	pOut, isAlive := doPing(addr, opts.Timeout)
+	pOut, isAlive := doPing(addr, opts.Timeout, opts.Force)
 	res.PingRTT = parseRTT(pOut)
+	// if ping failed, be more persistent and try a small TCP probe set when force is enabled
+	if !isAlive && opts.Force {
+		if hostAliveByTCP(addr, opts.Timeout, opts.Force) {
+			isAlive = true
+		}
+	}
+
 	if opts.HideDown && !isAlive {
 		res.Status = "Hidden"
 		return res
@@ -86,8 +104,24 @@ func processTarget(target string, opts ScanOptions) HostResult {
 
 		for _, p := range tcpPorts {
 			start := time.Now()
-			d := net.Dialer{Timeout: opts.Timeout}
-			conn, err := d.Dial("tcp", net.JoinHostPort(addr, p))
+			var conn net.Conn
+			var err error
+			attempts := 1
+			if opts.Force {
+				attempts = 5
+			}
+			for i := 0; i < attempts; i++ {
+				d := net.Dialer{Timeout: opts.Timeout}
+				conn, err = d.Dial("tcp", net.JoinHostPort(addr, p))
+				if err == nil {
+					break
+				}
+				if opts.Force {
+					time.Sleep(200 * time.Millisecond)
+				} else {
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
 			dur := time.Since(start)
 			if err == nil {
 				svc := smartFingerprint(conn, p, target)
@@ -100,7 +134,7 @@ func processTarget(target string, opts ScanOptions) HostResult {
 		}
 
 		for _, p := range parsePorts(opts.UDPStr) {
-			if scanUDPPort(addr, p, opts.Timeout) {
+			if scanUDPPort(addr, p, opts.Timeout, opts.Force) {
 				res.Ports = append(res.Ports, PortResult{Port: p, Protocol: "UDP", Status: "Open|Filtered", Service: "Unknown"})
 			}
 		}
@@ -116,23 +150,40 @@ func processTarget(target string, opts ScanOptions) HostResult {
 	return res
 }
 
-func doPing(addr string, timeout time.Duration) (string, bool) {
+func doPing(addr string, timeout time.Duration, force bool) (string, bool) {
 	if timeout <= 0 {
 		timeout = 400 * time.Millisecond
 	}
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("ping", "-n", "1", "-w", strconv.Itoa(int(timeout.Milliseconds())), addr)
-	} else {
-		secs := int(timeout.Seconds())
-		if secs < 1 {
-			secs = 1
-		}
-		cmd = exec.Command("ping", "-c", "1", "-W", strconv.Itoa(secs), addr)
+	attempts := 1
+	if force {
+		attempts = 5
 	}
-	out, _ := cmd.CombinedOutput()
-	s := string(out)
-	return s, strings.Contains(strings.ToUpper(s), "TTL")
+	var combinedOut strings.Builder
+	for i := 0; i < attempts; i++ {
+		var cmd *exec.Cmd
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("ping", "-n", "1", "-w", strconv.Itoa(int(timeout.Milliseconds())), addr)
+		} else {
+			secs := int(timeout.Seconds())
+			if secs < 1 {
+				secs = 1
+			}
+			cmd = exec.Command("ping", "-c", "1", "-W", strconv.Itoa(secs), addr)
+		}
+		out, _ := cmd.CombinedOutput()
+		s := string(out)
+		combinedOut.WriteString(s)
+		if strings.Contains(strings.ToUpper(s), "TTL") {
+			return combinedOut.String(), true
+		}
+		// stronger backoff between attempts when force is enabled
+		if force {
+			time.Sleep(200 * time.Millisecond)
+		} else {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	return combinedOut.String(), false
 }
 
 func parseRTT(out string) string {
@@ -177,21 +228,60 @@ func smartFingerprint(c net.Conn, port, host string) string {
 	return "Unknown"
 }
 
-func scanUDPPort(ip, port string, timeout time.Duration) bool {
-	d := net.Dialer{Timeout: timeout}
-	conn, err := d.Dial("udp", net.JoinHostPort(ip, port))
-	if err != nil {
-		return false
+func scanUDPPort(ip, port string, timeout time.Duration, force bool) bool {
+	attempts := 1
+	if force {
+		attempts = 5
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(timeout))
-	_, err = conn.Write([]byte{0x00})
-	if err != nil {
-		return false
+	for i := 0; i < attempts; i++ {
+		d := net.Dialer{Timeout: timeout}
+		conn, err := d.Dial("udp", net.JoinHostPort(ip, port))
+		if err != nil {
+			if force {
+				time.Sleep(200 * time.Millisecond)
+			} else {
+				time.Sleep(100 * time.Millisecond)
+			}
+			continue
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(timeout))
+		_, err = conn.Write([]byte{0x00})
+		if err != nil {
+			return false
+		}
+		buf := make([]byte, 1)
+		_, _ = conn.Read(buf)
+		return true
 	}
-	buf := make([]byte, 1)
-	_, _ = conn.Read(buf)
-	return true
+	return false
+}
+
+// hostAliveByTCP attempts to detect whether a host is up by trying
+// a small set of common TCP ports. Returns true if any connect succeeds.
+func hostAliveByTCP(addr string, timeout time.Duration, force bool) bool {
+	common := []string{"80", "443", "22", "445", "3389", "8080"}
+	attempts := 1
+	if force {
+		attempts = 3
+	}
+	for _, p := range common {
+		var err error
+		for i := 0; i < attempts; i++ {
+			d := net.Dialer{Timeout: timeout}
+			conn, e := d.Dial("tcp", net.JoinHostPort(addr, p))
+			err = e
+			if e == nil {
+				conn.Close()
+				return true
+			}
+			if force {
+				time.Sleep(150 * time.Millisecond)
+			}
+		}
+		_ = err
+	}
+	return false
 }
 
 func getNetBIOS(ip string, timeout time.Duration) string {
@@ -249,6 +339,57 @@ func getMacAndVendor(ip string) (string, string) {
 		}
 	}
 	return "", ""
+}
+
+// mdnsResolveName queries mDNS for common host service entries and
+// attempts to match an entry's address to the given IP. Returns the
+// discovered name without trailing dot, or empty string if not found.
+func mdnsResolveName(ip string, timeout time.Duration) string {
+	entriesCh := make(chan *mdns.ServiceEntry, 16)
+	found := make(chan string, 1)
+
+	// collector goroutine
+	go func() {
+		for e := range entriesCh {
+			if e == nil {
+				continue
+			}
+			if e.AddrV4 != nil && e.AddrV4.String() == ip {
+				name := strings.TrimSuffix(e.Name, ".")
+				select {
+				case found <- name:
+				default:
+				}
+				return
+			}
+			if e.AddrV6 != nil && e.AddrV6.String() == ip {
+				name := strings.TrimSuffix(e.Name, ".")
+				select {
+				case found <- name:
+				default:
+				}
+				return
+			}
+		}
+	}()
+
+	// run lookup for a common host service; many devices advertise
+	// as _workstation._tcp on local networks
+	go func() {
+		// Temporarily silence the standard logger to avoid noisy mdns INFO logs.
+		prev := log.Writer()
+		log.SetOutput(io.Discard)
+		mdns.Lookup("_workstation._tcp", entriesCh)
+		log.SetOutput(prev)
+		close(entriesCh)
+	}()
+
+	select {
+	case n := <-found:
+		return n
+	case <-time.After(timeout):
+		return ""
+	}
 }
 
 func parseTTL(o string) int {

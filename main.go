@@ -10,19 +10,22 @@ import (
 )
 
 func main() {
-	comp := flag.String("ComputerName", "localhost", "")
-	portsStr := flag.String("Port", "", "")
-	allPorts := flag.Bool("all", false, "")
-	udpPorts := flag.String("udp", "", "")
-	trace := flag.Bool("Trace", false, "")
-	hd := flag.Bool("hd", false, "")
-	vendor := flag.Bool("v", false, "")
-	nb := flag.Bool("netbios", false, "")
-	maxWorkers := flag.Int("w", 20, "")
-	timeoutMS := flag.Int("timeout", 400, "")
-	save := flag.String("Save", "", "")
-	format := flag.String("format", "txt", "")
-	compare := flag.String("Compare", "", "")
+	comp := flag.String("computerName", "localhost", "Host, IP, or CIDR range to scan (default 'localhost')")
+	portsStr := flag.String("port", "", "Comma-separated TCP port(s) to scan (e.g. '80,443')")
+	allPorts := flag.Bool("all", false, "Scan predefined well-known ports")
+	udpPorts := flag.String("udp", "", "Comma-separated UDP port(s) to scan")
+	trace := flag.Bool("trace", false, "Perform traceroute to discovered hosts")
+	hd := flag.Bool("hd", false, "Hide hosts that do not respond (show only 'up')")
+	mdnsFlag := flag.Bool("mdns", false, "Use mDNS as a fallback when hostname resolution fails")
+	force := flag.Bool("force", false, "Aggressively retry hosts/ports to be more persistent")
+	quiet := flag.Bool("quiet", false, "Suppress console output and progress (quiet mode)")
+	vendor := flag.Bool("v", false, "Obtain MAC address and vendor via ARP")
+	nb := flag.Bool("netbios", false, "Use NetBIOS to resolve name and check SMB signing")
+	maxWorkers := flag.Int("w", 20, "Maximum number of concurrent workers")
+	timeoutMS := flag.Int("timeout", 400, "Operation timeout in milliseconds (min 100)")
+	save := flag.String("save", "", "File path to save results")
+	format := flag.String("format", "txt", "Export format: txt|json|csv (default 'txt')")
+	compare := flag.String("compare", "", "File or dataset to compare results against")
 	flag.Parse()
 
 	if *maxWorkers < 1 {
@@ -45,6 +48,9 @@ func main() {
 		AllPorts: *allPorts,
 		Trace:    *trace,
 		HideDown: *hd,
+		UseMDNS:  *mdnsFlag,
+		Force:    *force,
+		Quiet:    *quiet,
 		Vendor:   *vendor,
 		NetBIOS:  *nb,
 		Timeout:  time.Duration(*timeoutMS) * time.Millisecond,
@@ -68,14 +74,18 @@ func main() {
 			}
 			mu.Unlock()
 			atomic.AddInt32(&completed, 1)
-			updateProgress()
+			if !opts.Quiet {
+				updateProgress()
+			}
 		}(target)
 	}
 	wg.Wait()
 	fmt.Print(ClearL)
 
-	for _, res := range globalResults {
-		printResult(res)
+	if !opts.Quiet {
+		for _, res := range globalResults {
+			printResult(res)
+		}
 	}
 
 	if *compare != "" {
