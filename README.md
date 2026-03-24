@@ -39,7 +39,7 @@ Flags principales (lista completa)
 - `-netbios`      : Ejecuta consultas NetBIOS/SMB (cuando aplica).
 - `-w`            : Número máximo de workers concurrentes (por defecto `20`).
 - `-timeout`      : Timeout en milisegundos para operaciones de red (por defecto `400`).
-- `-Save`         : Ruta de fichero donde guardar el reporte (ej: `report.csv`).
+- `-save`         : Ruta de fichero donde guardar el reporte (ej: `report.csv`).
 - `-format`       : Formato de export: `csv`, `json`, `html`, `txt` (por defecto `txt`).
 - `-compare`      : Archivo previo para comparar resultados y mostrar diferencias.
 
